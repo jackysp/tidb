@@ -36,7 +36,5 @@ jobs:
       shell: pwsh
       
     - name: test
-      run: |
-        ./failpoint-ctl enable
-        log_level="fatal" TZ="Asia/Shanghai" go test ./...
+      run: make gotest
       shell: bash
