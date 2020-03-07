@@ -32,4 +32,11 @@ jobs:
       shell: bash
 
     - name: test
-      run: go test ./...
+      run: |
+        $env:log_level="fatal"
+        $env:TZ="Asia/Shanghai"
+        go build github.com/pingcap/failpoint/failpoint-ctl
+        ./failpoint-ctl enable
+        go test ./...
+        ./failpoint-ctl disable
+      shell: pwsh
