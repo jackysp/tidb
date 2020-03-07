@@ -37,9 +37,6 @@ jobs:
       
     - name: test
       run: |
-        $env:log_level="fatal"
-        $env:TZ="Asia/Shanghai"
         ./failpoint-ctl enable
-        go test ./...
-        ./failpoint-ctl disable
-      shell: pwsh
+        log_level="fatal" TZ="Asia/Shanghai" go test ./...
+      shell: bash
