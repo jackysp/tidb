@@ -30,11 +30,7 @@ jobs:
             dep ensure
         fi
       shell: bash
-
-    - name: failpoint-ctl
-      run: go build github.com/pingcap/failpoint/failpoint-ctl
-      shell: pwsh
       
     - name: test
-      run: make gotest
+      run: make dev
       shell: bash
