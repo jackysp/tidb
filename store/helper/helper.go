@@ -671,11 +671,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 
 // NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
 func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newIndexWithKeyRange(db, table, index)
+	return newIndexWithKeyRange(db, table, index, table.ID)
 }
 
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalID int64) TableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(physicalID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return TableInfoWithKeyRange{
