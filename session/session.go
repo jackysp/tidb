@@ -1571,7 +1571,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if s.GetSessionVars().SnapshotTS != 0 {
 		curTxnStartTS = s.GetSessionVars().SnapshotTS
 	}
-	s.GetSessionVars().
 	p := s.currentPlan
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
