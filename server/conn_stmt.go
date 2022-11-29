@@ -314,6 +314,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return err
 	}
 
+	time.Sleep(time.Duration(10) * time.Second)
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
