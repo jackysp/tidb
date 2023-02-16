@@ -218,7 +218,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	} else {
 		// Clients are often noisy in setting session variables such as
 		// autocommit, timezone, query cache
-		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
 	switch name {
