@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -905,6 +906,7 @@ func setupMetrics() {
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler)
 
+	grpc_prometheus.EnableClientHandlingTimeHistogram()
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 
