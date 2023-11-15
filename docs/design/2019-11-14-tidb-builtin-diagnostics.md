@@ -190,7 +190,7 @@ In this proposal, we are opt to the second solution. Although it is more difficu
 
 1. Add the `remote-metrics-storage` configuration to the PD and temporarily configure it as the address of the Prometheus Server. PD acts as a proxy, and the request is transferred to Prometheus for execution. The main considerations are as follows:
 
-    - PD will have its own implementation of the query interface to realize bootstraping. No other changes needed for TiDB.
+    - PD will have its own implementation of the query interface to realize bootstrapping. No other changes needed for TiDB.
     - With bootstrapping realized, users can still use SQL to query monitoring information and diagnostic frameworks without relying on the Prometheus component deployed by TiDB
 
 2. Extract the modules for persisting and querying Prometheus time series data and embed it in PD.
@@ -216,7 +216,7 @@ However, because TiKV plan to completely removes the HTTP API in the future, onl
 ```proto
 // Diagnostics service for TiDB cluster components.
 service Diagnostics {
-	// Searchs log in the target node
+	// Searches log in the target node
 	rpc search_log(SearchLogRequest) returns (SearchLogResponse) {};
 	// Retrieves server info in the target node
 	rpc server_info(ServerInfoRequest) returns (ServerInfoResponse) {};
@@ -294,7 +294,7 @@ Each TiDB instance can access the information of other nodes through the HTTP AP
 
 - End User: Users can obtain cluster information directly through SQL query to troubleshooting problem
 - Operation and maintenance system: The ability to obtain cluster information through SQL will make it easier for users to integrate TiDB into their own operation and maintenance systems.
-- Eco-system tools: External tools get the cluster information through SQL to realize function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the `events_statements_summary_by_digest` table of the cluster.
+- Eco-system tools: External tools get the cluster information through SQL to realize function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the `statements_summary` table of the cluster.
 
 #### Cluster Topology System Table
 
@@ -480,7 +480,7 @@ This proposal needs to implement the following performance profiling table:
 
 #### Globalized memory system table
 
-Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` memory tables only contain single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
+Current the `slow_query`/`statements_summary`/`processlist` memory tables only contain single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
 
 | Table Name | Description |
 |------|-----|

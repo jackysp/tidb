@@ -8,59 +8,20 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-PROJECT=tidb
-GOPATH ?= $(shell go env GOPATH)
-P=8
+include Makefile.common
 
-# Ensure GOPATH is set before running build process.
-ifeq "$(GOPATH)" ""
-  $(error Please set the environment variable GOPATH before running `make`)
-endif
-FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
+.PHONY: help all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
 
-CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
-export PATH := $(path_to_add):$(PATH)
+.DEFAULT_GOAL := default
 
-GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
-GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p $(P)
-OVERALLS        := GO111MODULE=on overalls
-STATICCHECK     := GO111MODULE=on staticcheck
-
-ARCH      := "`uname -s`"
-LINUX     := "Linux"
-MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd"
-PACKAGES  := $$($(PACKAGE_LIST))
-PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
-FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
-
-FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable)
-FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
-
-LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-
-TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
-COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
-
-CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
-
-TARGET = ""
-
-# VB = Vector Benchmark
-VB_FILE =
-VB_FUNC =
-
-
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
+# Adapted from https://www.thapaliya.com/en/writings/well-documented-makefiles/
+help: ## Display this help and any documented user-facing targets. Other undocumented targets may be present in the Makefile.
+help:
+	@awk 'BEGIN {FS = ": ##"; printf "Usage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_\.\-\/%]+: ##/ { printf "  %-45s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 default: server buildsucc
 
@@ -71,62 +32,45 @@ buildsucc:
 
 all: dev server benchkv
 
-parser:
-	@echo "remove this command later, when our CI script doesn't call it"
-
-dev: checklist check test
-
-build:
-	$(GOBUILD)
+dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
+	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive
 
-check: fmt errcheck lint tidy testSuite check-static vet staticcheck
+precheck: fmt bazel_prepare
 
-# These need to be fixed before they can be ran regularly
-check-fail: goword check-slow
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-goword:tools/bin/goword
-	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-
-gosec:tools/bin/gosec
-	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
-
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=misspell \
-	  --enable=ineffassign \
-	  $$($(PACKAGE_DIRECTORIES))
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
-check-slow:tools/bin/gometalinter tools/bin/gosec
-	tools/bin/gometalinter --disable-all \
-	  --enable errcheck \
-	  $$($(PACKAGE_DIRECTORIES))
-
-errcheck:tools/bin/errcheck
-	@echo "errcheck"
-	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -ignoretests -blank $(PACKAGES)
+check-file-perm:
+	@echo "check file permission"
+	./tools/check/check-file-perm.sh
 
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
 
+errdoc:tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh
+
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
 
-vet:
-	@echo "vet"
-	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+license:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c ./.github/licenserc.yml  header check
 
-staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
-	$(STATICCHECK) ./...
 
 tidy:
 	@echo "go mod tidy"
@@ -136,94 +80,133 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean:
+check-parallel:
+# Make sure no tests are run in parallel to prevent possible unstable tests.
+# See https://github.com/pingcap/tidb/pull/30692.
+	@! find . -name "*_test.go" -not -path "./vendor/*" -print0 | \
+		xargs -0 grep -F -n "t.Parallel()" || \
+		! echo "Error: all the go tests should be run in serial."
+
+clean: failpoint-disable
 	$(GO) clean -i ./...
-	rm -rf *.out
-	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
 	@>&2 echo "Great, all tests passed."
 
-test_part_1: checklist explaintest
+test_part_1: checklist integrationtest
 
-test_part_2: checkdep gotest gogenerate
+test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
-explaintest: server
-	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
+test_part_parser: parser_yacc test_part_parser_dev
+
+test_part_parser_dev: parser_fmt parser_unit_test
+
+parser:
+	@cd pkg/parser && make parser
+
+parser_yacc:
+	@cd pkg/parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd pkg/parser && make fmt
+
+parser_unit_test:
+	@cd pkg/parser && make test
+
+test_part_br: br_unit_test br_integration_test
+
+test_part_dumpling: dumpling_unit_test dumpling_integration_test
+
+integrationtest: server_check
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
 ddltest:
-	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
+	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
-upload-coverage: SHELL:=/bin/bash
-upload-coverage:
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
-endif
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
-gotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=error; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
-	@echo "Running in native mode."
-	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
-endif
+ut: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --only unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 race: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --race --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-
-leak: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-tikv_integration_test: failpoint-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-RACE_FLAG =
-ifeq ("$(WITH_RACE)", "1")
-	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(GOPATH) $(GO) build
-endif
-
-CHECK_FLAG =
-ifeq ("$(WITH_CHECK)", "1")
-	CHECK_FLAG = $(TEST_LDFLAGS)
-endif
+	@$(CLEAN_UT_BINARY)
 
 server:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
 else
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
+
+server_debug:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
+else
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+endif
+
+init-submodule:
+	git submodule init && git submodule update --force
+
+enterprise-prepare:
+	cd pkg/extension/enterprise/generate && $(GO) generate -run genfile main.go
+
+enterprise-clear:
+	cd pkg/extension/enterprise/generate && $(GO) generate -run clear main.go
+
+enterprise-docker: init-submodule enterprise-prepare
+	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
+
+enterprise-server-build: TIDB_EDITION=Enterprise
+enterprise-server-build:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
+endif
+
+enterprise-server:
+	$(MAKE) init-submodule
+	$(MAKE) enterprise-prepare
+	$(MAKE) enterprise-server-build
 
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./cmd/tidb-server
 else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 linux:
 ifeq ($(TARGET), "")
-	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-linux tidb-server/main.go
+	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-linux ./cmd/tidb-server
 else
-	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	GOOS=linux $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 server_coverage:
@@ -256,44 +239,35 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
-
-tools/bin/megacheck: tools/check/go.mod
+tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
-	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
+	$(GO) build -o ../bin/ut ut.go
 
-tools/bin/revive: tools/check/go.mod
+tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
-	$(GO) build -o ../bin/revive github.com/mgechev/revive
+	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/goword: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
+tools/bin/revive:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
-tools/bin/gometalinter: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
+tools/bin/failpoint-ctl:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
 
-tools/bin/gosec: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
+tools/bin/errdoc-gen:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/errors/errdoc-gen@518f63d
 
-tools/bin/errcheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
-
-tools/bin/failpoint-ctl: go.mod
-	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
-
-tools/bin/misspell:tools/check/go.mod
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
-tools/bin/ineffassign:tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
+	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
+
+tools/bin/vfsgendev:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
+
+tools/bin/gotestsum:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
+
+tools/bin/mockgen:
+	GOBIN=$(shell pwd)/tools/bin $(GO) install go.uber.org/mock/mockgen@v0.3.0
 
 # Usage:
 #
@@ -304,3 +278,362 @@ vectorized-bench:
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"
+
+testpkg: failpoint-enable
+ifeq ("$(pkg)", "")
+	@echo "Require pkg parameter"
+else
+	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)
+
+# Collect the daily benchmark data.
+# Usage:
+#	make bench-daily TO=/path/to/file.json
+bench-daily:
+	go test -tags intest github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/util/benchdaily -run TestBenchDaily -bench Ignore \
+		-date `git log -n1 --date=unix --pretty=format:%cd` \
+		-commit `git log -n1 --pretty=format:%h` \
+		-outfile $(TO)
+
+build_tools: build_br build_lightning build_lightning-ctl
+
+br_web:
+	@cd br/web && npm install && npm run build
+
+build_br:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) br/cmd/br/*.go
+
+build_lightning_for_web:
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning-ctl:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) br/cmd/tidb-lightning-ctl/main.go
+
+build_for_br_integration_test:
+	@make failpoint-enable
+	($(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(BR_BIN).test \
+		github.com/pingcap/tidb/br/cmd/br && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
+	) || (make failpoint-disable && exit 1)
+	@make failpoint-disable
+
+br_unit_test: export ARGS=$$($(BR_PACKAGES))
+br_unit_test:
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
+br_unit_test_in_verify_ci: tools/bin/gotestsum
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
+	$(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+br_integration_test: br_bins build_br build_for_br_integration_test
+	@cd br && tests/run.sh
+
+br_integration_test_debug:
+	@cd br && tests/run.sh --no-tiflash
+
+br_compatibility_test_prepare:
+	@cd br && tests/run_compatible.sh prepare
+
+br_compatibility_test:
+	@cd br && tests/run_compatible.sh run
+
+mock_s3iface: tools/bin/mockgen
+	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
+
+# mock interface for lightning and IMPORT INTO
+mock_lightning: tools/bin/mockgen
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
+
+gen_mock: tools/bin/mockgen
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler TaskTable,Pool,Scheduler,Extension > pkg/disttask/framework/mock/scheduler_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/dispatcher Dispatcher,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/dispatcher_mock.go
+	tools/bin/mockgen -package execute github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute SubtaskExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
+  
+# There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
+# but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
+# cgo enabled on regular builds is performance.
+ifeq ("$(GOOS)", "freebsd")
+        GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
+endif
+
+# TODO: adjust bins when br integraion tests reformat.
+br_bins:
+	@which bin/tidb-server
+	@which bin/tikv-server
+	@which bin/pd-server
+	@which bin/pd-ctl
+	@which bin/go-ycsb
+	@which bin/minio
+	@which bin/tiflash
+	@which bin/libtiflash_proxy.so
+	@which bin/cdc
+	@which bin/fake-gcs-server
+	@which bin/tikv-importer
+	if [ ! -d bin/flash_cluster_manager ]; then echo "flash_cluster_manager not exist"; exit 1; fi
+
+%_generated.go: %.rl
+	ragel -Z -G2 -o tmp_parser.go $<
+	@echo '// Code generated by ragel DO NOT EDIT.' | cat - tmp_parser.go | sed 's|//line |//.... |g' > $@
+	@rm tmp_parser.go
+
+data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+
+build_dumpling:
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
+
+dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test: failpoint-enable
+	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+dumpling_unit_test_in_verify_ci: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- $(DUMPLING_ARGS) \
+	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+dumpling_integration_test: dumpling_bins failpoint-enable
+	@make build_dumpling
+	@make failpoint-disable
+	./dumpling/tests/run.sh $(CASE)
+
+dumpling_bins:
+	@which bin/tidb-server
+	@which bin/minio
+	@which bin/mc
+	@which bin/tidb-lightning
+	@which bin/sync_diff_inspector
+
+generate_grafana_scripts:
+	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+
+bazel_ci_prepare:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
+	mv tmp.txt DEPS.bzl
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
+bazel_ci_simple_prepare:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
+bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+	bazel run \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
+	bazel run  //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
+	rm -rf $($@TMP_OUT)
+
+bazel_ci_prepare_rbe:
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+	bazel run --//build:with_rbe_flag=true \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
+check-bazel-prepare:
+	@echo "make bazel_prepare"
+	./tools/check/check-bazel-prepare.sh
+
+bazel_test: failpoint-enable bazel_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+		--define gotags=deadlock,intest \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+
+
+bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+
+bazel_build:
+	mkdir -p bin
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//... --//build:with_nogo_flag=true
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=true
+	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
+	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
+
+bazel_fail_build:  failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//...
+
+bazel_clean:
+	bazel $(BAZEL_GLOBAL_CONFIG) clean
+
+bazel_junit:
+	bazel_collect
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+
+bazel_golangcilinter:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
+	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
+
+bazel_brietest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/brietest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/pessimistictest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/sessiontest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/statisticstest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_txntest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/txntest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/addindextest/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_addindextest1: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/addindextest1/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_addindextest2: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/addindextest2/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_addindextest3: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/addindextest3/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_addindextest4: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/addindextest4/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest2: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest2/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest3: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest3/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/importintotest4/...
+	./build/jenkins_collect_coverage.sh
+
+bazel_lint: bazel_prepare
+	bazel build //... --//build:with_nogo_flag=true
+
+docker:
+	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
+
+docker-test:
+	docker buildx build --platform linux/amd64,linux/arm64 --push -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
+
+bazel_mirror:
+	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
+	rm -rf $($@TMP_OUT)
+
+bazel_sync:
+	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)

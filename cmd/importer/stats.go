@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,30 +16,31 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	stats "github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	stats "github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
 func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jsTable := &handle.JSONTable{}
+	jsTable := &util.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return handle.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
+	return storage.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
 }
 
 type histogram struct {
@@ -74,6 +76,7 @@ func (h *histogram) randInt() int64 {
 	return h.Bounds.GetRow(idx).GetInt64(0)
 }
 
+// #nosec G404
 func getValidPrefix(lower, upper string) string {
 	for i := range lower {
 		if i >= len(upper) {
@@ -83,7 +86,7 @@ func getValidPrefix(lower, upper string) string {
 			randCh := uint8(rand.Intn(int(upper[i]-lower[i]))) + lower[i]
 			newBytes := make([]byte, i, i+1)
 			copy(newBytes, lower[:i])
-			newBytes = append(newBytes, byte(randCh))
+			newBytes = append(newBytes, randCh)
 			return string(newBytes)
 		}
 	}

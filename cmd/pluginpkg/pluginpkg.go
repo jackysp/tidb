@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -38,8 +38,7 @@ const codeTemplate = `
 package main
 
 import (
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/plugin"
 )
 
 func PluginManifest() *plugin.Manifest {
@@ -52,15 +51,6 @@ func PluginManifest() *plugin.Manifest {
 			RequireVersion: map[string]uint16{},
 			License:        "{{.license}}",
 			BuildTime:      "{{.buildTime}}",
-			SysVars: map[string]*variable.SysVar{
-			    {{range .sysVars}}
-				"{{.name}}": {
-					Scope: variable.Scope{{.scope}},
-					Name:  "{{.name}}",
-					Value: "{{.value}}",
-				},
-				{{end}}
-			},
 			{{if .validate }}
 				Validate:   {{.validate}},
 			{{end}}
@@ -118,10 +108,6 @@ func main() {
 	manifest["buildTime"] = time.Now().String()
 
 	pluginName := manifest["name"].(string)
-	if strings.Contains(pluginName, "-") {
-		log.Printf("plugin name should not contain '-'\n")
-		os.Exit(1)
-	}
 	if pluginName != filepath.Base(pkgDir) {
 		log.Printf("plugin package must be same with plugin name in manifest file\n")
 		os.Exit(1)
@@ -135,7 +121,7 @@ func main() {
 	}
 
 	genFileName := filepath.Join(pkgDir, filepath.Base(pkgDir)+".gen.go")
-	genFile, err := os.OpenFile(genFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	genFile, err := os.OpenFile(genFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0700) // #nosec G302
 	if err != nil {
 		log.Printf("generate code failure during prepare output file, %+v\n", err)
 		os.Exit(1)
