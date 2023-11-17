@@ -468,6 +468,11 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			return
 		}
 
+		if s.dom != nil && s.dom.SchemaValidator.IsExpired() {
+			conn.Close()
+			continue
+		}
+
 		logutil.BgLogger().Debug("accept new connection success")
 
 		clientConn := s.newConn(conn)

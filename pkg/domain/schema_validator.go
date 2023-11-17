@@ -57,6 +57,8 @@ type SchemaValidator interface {
 	Reset()
 	// IsStarted indicates whether SchemaValidator is started.
 	IsStarted() bool
+	// IsExpired checks if the schema is expired now.
+	IsExpired() bool
 }
 
 type deltaSchemaInfo struct {
@@ -292,6 +294,13 @@ func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.Relat
 			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", s.deltaSchemaInfos[0].schemaVersion))
 		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
 	}
+}
+
+// IsExpired checks if the schema is expired now.
+func (s *schemaValidator) IsExpired() bool {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	return time.Now().After(s.latestSchemaExpire)
 }
 
 // containIn is checks if lasteDelta is included in curDelta considering table id and action type.
