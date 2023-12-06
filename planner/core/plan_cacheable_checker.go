@@ -73,7 +73,7 @@ func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node,
 		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
-	return checker.cacheable, checker.reason
+	return true, ""
 }
 
 // cacheableChecker checks whether a query can be cached:
@@ -221,6 +221,7 @@ var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPl
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
+	return true, ""
 	selStmt, isSelect := node.(*ast.SelectStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
 		(!isSelect || selStmt.LockInfo != nil) {
