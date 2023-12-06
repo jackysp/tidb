@@ -90,6 +90,11 @@ type cacheableChecker struct {
 
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	defer func() {
+		checker.cacheable = true
+		checker.reason = ""
+	}()
+
 	switch node := in.(type) {
 	case *ast.SelectStmt:
 		for _, hints := range node.TableHints {
@@ -399,6 +404,11 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, s
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	defer func() {
+		checker.cacheable = true
+		checker.reason = ""
+	}()
+
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
