@@ -317,9 +317,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		// if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
-		// 	stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
-		// }
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
+			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
+		}
 	}
 
 	// put this plan into the plan cache.

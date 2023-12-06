@@ -687,7 +687,6 @@ const (
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	return
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}

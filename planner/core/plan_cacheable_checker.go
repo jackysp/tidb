@@ -73,7 +73,7 @@ func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node,
 		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
-	return true, ""
+	return checker.cacheable, checker.reason
 }
 
 // cacheableChecker checks whether a query can be cached:
@@ -90,11 +90,6 @@ type cacheableChecker struct {
 
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	defer func() {
-		checker.cacheable = true
-		checker.reason = ""
-	}()
-
 	switch node := in.(type) {
 	case *ast.SelectStmt:
 		for _, hints := range node.TableHints {
@@ -221,7 +216,6 @@ var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPl
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
 func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
-	return true, ""
 	selStmt, isSelect := node.(*ast.SelectStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
 		(!isSelect || selStmt.LockInfo != nil) {
@@ -315,13 +309,6 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
-	if len(selectStmt.TableHints) > 0 || // hints
-		selectStmt.Having != nil || // having
-		selectStmt.WindowSpecs != nil || // window function
-		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
-		selectStmt.SelectIntoOpt != nil { // select-into statement
-		return nil, false, "queries that have hints, having-clause, window-function are not supported"
-	}
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
 		return nil, false, "queries that have sub-queries are not supported"
@@ -370,9 +357,6 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 	default:
 		return names, false, "queries that have sub-queries are not supported"
 	}
-	if len(names) > 2 {
-		return names, false, "queries that have more than 2 tables are not supported"
-	}
 	return names, true, ""
 }
 
@@ -405,11 +389,6 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, s
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	defer func() {
-		checker.cacheable = true
-		checker.reason = ""
-	}()
-
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
