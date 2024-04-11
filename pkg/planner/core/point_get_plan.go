@@ -919,8 +919,8 @@ func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
 		}
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
-	case *ast.DeleteStmt:
-		return tryDeletePointPlan(ctx, x)
+		//case *ast.DeleteStmt:
+		//	return tryDeletePointPlan(ctx, x)
 	}
 	return nil
 }
