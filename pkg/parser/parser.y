@@ -272,6 +272,7 @@ import (
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
+	tableFromJson     "TABLE_FROM_JSON"
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
 	then              "THEN"
@@ -4424,6 +4425,15 @@ CreateTableStmt:
 		}
 		$$ = tmp
 	}
+|	"CREATE" "TABLE_FROM_JSON" IfNotExists TableName stringLit
+	{
+		$$ = &ast.CreateTableStmt{
+			Table:       $4.(*ast.TableName),
+			IfNotExists: $3.(bool),
+			JsonFile:    $5,
+		}
+	}
+
 
 OnCommitOpt:
 	{

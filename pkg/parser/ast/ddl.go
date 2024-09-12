@@ -1068,6 +1068,7 @@ type CreateTableStmt struct {
 	Partition      *PartitionOptions
 	OnDuplicate    OnDuplicateKeyHandlingType
 	Select         ResultSetNode
+	JsonFile       string
 }
 
 // Restore implements Node interface.

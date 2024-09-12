@@ -795,6 +795,7 @@ var tokenMap = map[string]int{
 	"TARGET":                   target,
 	"TASK_TYPES":               taskTypes,
 	"TABLE_CHECKSUM":           tableChecksum,
+	"TABLE_FROM_JSON":          tableFromJson,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
 	"TABLESAMPLE":              tableSample,
